@@ -1,0 +1,27 @@
+server:
+  port: ${NODE_PORT:8085}
+
+spring:
+  rabbitmq:
+    host: ${RABBIT_HOST:localhost}
+    port: ${RABBIT_PORT:5672}
+    username: ${RABBIT_USERNAME:userok}
+    password: ${RABBIT_PASSWORD:password}
+    queues:
+      callback-update: callback_update
+      text-message-update: text_message_update
+      photo-message-update: photo_message_update
+      answer-message: answer_message
+      answer-photo-message: answer_photo_message
+  datasource:
+    url: ${POSTGRES_URL:jdbc:postgresql://localhost:5400/pogreb}
+    username: ${POSTGRES_USERNAME:userok}
+    password: ${POSTGRES_PASSWORD:p@ssw0rd}
+  jpa:
+    generate-ddl: true
+
+token:
+service:
+  file_info:
+    uri: https://api.telegram.org/bot{token}/getFile?file_id={fileId}
+

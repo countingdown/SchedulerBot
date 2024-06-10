@@ -1,0 +1,173 @@
+version: '3.9'
+
+volumes:
+  rabbitmq-data:
+    driver: local
+  postgres-data:
+    driver: local
+  traefik-certs:
+    driver: local
+
+services:
+  dispatcher:
+    container_name: dispatcher
+    restart: on-failure
+    build:
+      context: ./
+      dockerfile: ./dispatcher/Dockerfile
+#    ports:
+#      - "8084:8084"
+    environment:
+      DISPATCHER_PORT: 8084
+      TG_BOT_NAME: my_tasks_scheduler_bot
+      TG_BOT_TOKEN:
+      TG_BOT_URI:
+      RABBIT_HOST: rabbit-mq
+      RABBIT_PORT: 5672
+      RABBIT_USERNAME: userok
+      RABBIT_PASSWORD: password
+      RABBIT_CALLBACK_UPDATE_QUEUE: callback_update
+      RABBIT_TEXT_MESSAGE_UPDATE_QUEUE: text_message_update
+      RABBIT_PHOTO_MESSAGE_UPDATE_QUEUE: photo_message_update
+      RABBIT_ANSWER_MESSAGE_QUEUE: answer_message
+      RABBIT_ANSWER_PHOTO_MESSAGE_QUEUE: answer_photo_message
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.services.dispatcher.loadbalancer.server.port=${DISPATCHER_PORT}"
+      - "traefik.http.routers.dispatcher.rule=Host(`${HOST_URL}`) && PathPrefix(`/callback`)"
+      - "traefik.http.routers.dispatcher.entrypoints=websecure8"
+      - "traefik.http.routers.dispatcher.tls=true"
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '100m'
+        max-file: '3'
+    depends_on:
+      rabbit-mq:
+        condition: service_healthy
+
+  node:
+    container_name: node
+    restart: on-failure
+    build:
+      context: ./
+      dockerfile: ./node/Dockerfile
+    environment:
+      NODE_PORT: 8085
+      RABBIT_HOST: rabbit-mq
+      RABBIT_PORT: 5672
+      RABBIT_USERNAME: userok
+      RABBIT_PASSWORD: password
+      RABBIT_CALLBACK_UPDATE_QUEUE: callback_update
+      RABBIT_TEXT_MESSAGE_UPDATE_QUEUE: text_message_update
+      RABBIT_PHOTO_MESSAGE_UPDATE_QUEUE: photo_message_update
+      RABBIT_ANSWER_MESSAGE_QUEUE: answer_message
+      RABBIT_ANSWER_PHOTO_MESSAGE_QUEUE: answer_photo_message
+      POSTGRES_URL: jdbc:postgresql://postgres-db:5432/pogreb
+      POSTGRES_USERNAME: userok
+      POSTGRES_PASSWORD: p@ssw0rd
+      TG_BOT_TOKEN:
+      TG_BOT_FILE_INFO_URI: https://api.telegram.org/bot{token}/getFile?file_id={fileId}
+      TG_BOT_URI:
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '100m'
+        max-file: '3'
+    depends_on:
+      rabbit-mq:
+        condition: service_healthy
+      postgres-db:
+        condition: service_healthy
+
+  rabbit-mq:
+    container_name: rabbit-mq
+    hostname: rabbit-mq
+    image: rabbitmq:3.12.12-management-alpine
+    ports:
+      - "5673:5672"
+      - "15673:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: userok
+      RABBITMQ_DEFAULT_PASS: password
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: [ "CMD", "rabbitmq-diagnostics", "--silent", "--quiet", "ping" ]
+      interval: 10s
+      timeout: 10s
+      retries: 6
+      start_period: 30s
+    restart: unless-stopped
+
+  postgres-db:
+    container_name: postgres-db
+    hostname: postgres-db
+    image: postgres:14.5
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5400:5432"
+    environment:
+      POSTGRES_USER: userok
+      POSTGRES_PASSWORD: p@ssw0rd
+      POSTGRES_DB: pogreb
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U userok -d pogreb -h postgres-db" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+
+  traefik:
+    container_name: traefik
+    image: traefik:v2.9
+    ports:
+      - 80:80
+      - 8443:8443
+      - 9443:9443
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./data/tls.yml:/tls.yml:ro
+      - /home/scheduler/certs:/etc/traefik/certs
+    labels:
+      - "traefik.enable=true"
+
+      - "traefik.http.routers.traefik.rule=Host(`${HOST_URL}`)"
+      - "traefik.http.routers.traefik.entrypoints=websecure9"
+      - "traefik.http.routers.traefik.tls=true"
+      - "traefik.http.routers.traefik.service=api@internal"
+      - "traefik.http.services.traefik.loadbalancer.server.port=8088"
+
+      # Установка пароля для входа в админку
+      - "traefik.http.middlewares.traefik-auth.basicauth.users=${TRAEFIK_USER}:${TRAEFIK_PASSWORD}"
+      - "traefik.http.routers.traefik.middlewares=traefik-auth"
+
+      - "traefik.http.routers.http-catchall.rule=HostRegexp(`{host:.+}`)"
+      - "traefik.http.routers.http-catchall.entrypoints=web"
+      - "traefik.http.routers.http-catchall.middlewares=redirect-to-https"
+
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.permanent=false"
+    command:
+      - "--api.dashboard=true"
+      - "--ping=true"
+      - "--ping.entrypoint=ping"
+      - "--entryPoints.ping.address=:8888"
+      - "--entryPoints.web.address=:80"
+      - "--entrypoints.websecure8.address=:8443"
+      - "--entrypoints.websecure9.address=:9443"
+      - "--providers.docker=true"
+      - "--providers.docker.endpoint=unix:///var/run/docker.sock"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.file.filename=/etc/traefik/data/tls.yml"
+    healthcheck:
+      test: [ "CMD", "wget", "http://127.0.0.1:8888/ping","--spider" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped

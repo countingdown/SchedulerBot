@@ -1,0 +1,22 @@
+server:
+  port: ${DISPATCHER_PORT:8084}
+  ssl:
+    enabled: false
+
+bot:
+  name: my_tasks_scheduler_bot
+  token:
+  uri:
+
+spring:
+  rabbitmq:
+    host: ${RABBIT_HOST:localhost}
+    port: ${RABBIT_PORT:5672}
+    username: ${RABBIT_USERNAME:userok}
+    password: ${RABBIT_PASSWORD:password}
+    queues:
+      callback-update: callback_update
+      text-message-update: text_message_update
+      photo-message-update: photo_message_update
+      answer-message: answer_message
+      answer-photo-message: answer_photo_message
